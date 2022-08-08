@@ -2,7 +2,7 @@
 title: "clean_sacpas_data"
 author: "Cat"
 date: '2022-08-05'
-output: html_document
+output: rmarkdown::github_document
 editor_options: 
   chunk_output_type: console
 ---
