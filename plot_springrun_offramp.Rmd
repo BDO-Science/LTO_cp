@@ -8,7 +8,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 library(readr)
 library(dplyr)
@@ -180,7 +180,7 @@ ggplot() +
 ```
 
 Timing of 95% salvage by water year type and brood year
-```{r}
+```{r, fig.width = 10}
 ggplot(nf.per, aes(x=adate, y= broodyear, color = survey, shape = yr_type))+
   geom_point(size = 10, na.rm = TRUE)+
   scale_x_date(date_breaks = "weeks",
@@ -196,7 +196,8 @@ ggplot(nf.per, aes(x=adate, y= broodyear, color = survey, shape = yr_type))+
 
 Mean 95% dates by water year type
 ```{r}
-ggplot(meanDate) + geom_point(aes(x = meandate, y = survey, color = yr_type, shape = yr_type), size = 4) +
+ggplot(meanDateWYType) + 
+  geom_point(aes(x = meandate, y = survey, color = yr_type, shape = yr_type), size = 4) +
   scale_x_date(date_breaks = "1 week") +
   scale_color_viridis(discrete = TRUE) +
   theme_bw() +
