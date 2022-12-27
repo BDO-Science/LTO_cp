@@ -1,0 +1,328 @@
+---
+title: "spring_plot_turbidity"
+author: "Catarina Pien"
+date: '2022-12-19'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Assignment: Plot historical turbidity for spring outflow appendix. 
+
+* Months: Mar, Apr, May, Jun
+* Sites: 
+  * Chipps Island (Delta outflow; Longfin) - DWR (MAL),
+  * Vernalis (Inflow) - DWR (SJR), 
+  * Deepwater Shipping Channel (Delta Smelt) - USGS (DWS; 11455142),
+  * Rio Vista (Delta Smelt) - USGS (SRV; 11455420)
+
+```{r}
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(dataRetrieval)
+library(CDECRetrieve) #cdec_datasets
+library(here)
+
+wytype <- read.csv("data_raw/WYType.csv") %>%
+  select(WY, Basin, Yr.type) %>%
+  mutate(wy = as.numeric(WY)) %>%
+  pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
+```
+
+## Get Turbidity data
+
+NWIS Function
+
+63680 = turbidity, NTU
+```{r}
+f_get_NWIS <- function(siteNumbers='11455420', parameterCd = '63680', startDate = "2000-01-01", endDate = "2022-12-01", tz = "Etc/GMT+8"){
+
+  # get data
+  print("Downloading data...")
+  data <- dataRetrieval::readNWISuv(siteNumbers, parameterCd, startDate, endDate, tz)
+
+  # fix names
+
+  data2 <- dataRetrieval::renameNWISColumns(data)
+
+  print("Data downloaded!")
+
+  # clean names
+  data2 <- janitor::clean_names(data2)
+
+  # write out
+  saveRDS(data2, paste0("data_raw/USGS_NWIS_", siteNumbers, "_turbidity.rds"))
+
+  # print message!
+  print("Data saved in data_raw")
+}
+
+```
+
+Get turbidity data
+```{r}
+f_get_NWIS(siteNumbers = 11455142) # DWC
+f_get_NWIS(siteNumbers = 11455420) # SRV
+
+# CDEC -----------------------------------------------------------------
+stations_turb <- c("MAL", "SJR")
+interval <- "E" # Event = every 15 minutes, H = Hourly, A = Annual
+
+turb <- lapply(stations_turb, 
+                 function(x){
+                 cdec_query(station = x, sensor_num = 27, dur_code = "E", start_date = "2000-01-01",
+                              end_date = "2022-12-01")})
+turb_df <- bind_rows(turb)%>%
+    mutate(turb = parameter_value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime)) %>%
+  filter(turb>=0) %>%
+  select(datetime,date,station = location_id, turb) %>%
+  filter(!is.na(station)) 
+
+turb_qc <- turb_df %>%
+  mutate(hour = hour(datetime)) %>%
+  group_by(station, date, hour) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(-datetime) %>%
+  group_by(station, date) %>%
+  summarise(total = n()) %>%
+  mutate(Flag_QC2 = ifelse(total < 20, "Y", "N"))  %>%
+  select(-total)
+
+turb_clean <- turb_df %>% left_join(turb_qc) %>%
+  filter(Flag_QC2 == "N") %>%
+  select(datetime,date,station , turb)
+
+high <- filter(turb_clean, turb > 100 & month(date) > 2 & month(date) < 7)
+
+```
+
+## Get flow for QA/QC
+```{r}
+f_get_NWIS_flow <- function(siteNumbers=11312676, parameterCd = c('00060'), startDate = "2000-01-01", endDate = "2022-11-01", tz = "Etc/GMT+8"){
+
+  # get data
+  print("Downloading data...")
+  data <- dataRetrieval::readNWISuv(siteNumbers, parameterCd, startDate, endDate, tz)
+
+  # fix names
+
+  data2 <- dataRetrieval::renameNWISColumns(data)
+
+  print("Data downloaded!")
+
+  # clean names
+  data2 <- janitor::clean_names(data2)
+
+  # write out
+  saveRDS(data2, paste0("data_raw/USGS_NWIS_", siteNumbers, "_flow.rds"))
+  }
+```
+
+
+```{r}
+f_get_NWIS_flow(siteNumbers = "11303500") 
+flow_Vernalis <- readRDS(here("data_raw", "USGS_NWIS_11303500_flow.rds")) %>%
+  rename(Datetime = date_time, 
+         flow = flow_inst)%>%
+  mutate(station = "SJR",
+         date = date(Datetime),
+         datetime = Datetime) %>%
+  select(datetime, date, station, flow) %>%
+  pivot_longer(cols = flow,
+               names_to = "parameter",
+               values_to = "value") 
+
+flow_vernalis_daily <- flow_Vernalis %>%
+  rename(value_all = value) %>%
+  group_by(date, station) %>%
+  summarize(value = mean(value_all, na.rm = TRUE)) %>%
+  ungroup() %>%
+  rename(flow = value)
+
+# Is there a flow station near Mallard/Chipps?? Maybe just use delta outflow
+f_get_NWIS_flow(siteNumbers = "380245121532301", parameterCd = c('72137')) 
+
+
+start = "2000-01-01"
+end = "2022-12-01"
+
+outflow <- cdec_query(station = "DTO" ,sensor_num = 23, dur_code = "D", start_date = start,end_date = end)
+
+outflow_df <- bind_rows(outflow)
+outflow_clean <- outflow_df %>%
+    mutate(parameter = "outflow", 
+           date = ymd(datetime), 
+           location_id = "MAL") %>%
+  select(date, station = location_id,flow = parameter_value) %>%
+  filter(!is.na(flow),
+         !is.na(station)) 
+```
+
+
+
+## Read in downloaded data
+
+### Turbidity
+```{r}
+DWC <- readRDS(here("data_raw", "USGS_NWIS_11455142_turbidity.rds")) %>%
+  rename(Datetime = date_time, 
+         turbidity = bgc_project_bgc_project_ts213_ysi_exo_turb_inst,
+         turbidity2 = dws_bor_hydro_project_ts213_ysi_exo_turb_inst)%>%
+  mutate(station = "DWC",
+         date = date(Datetime),
+         datetime = Datetime,
+         turb = ifelse(is.na(turbidity), turbidity2, turbidity)) %>%
+  filter(turb>=0) %>%
+  select(datetime, date, station, turb)
+
+SRV <- readRDS(here("data_raw", "USGS_NWIS_11455420_turbidity.rds")) %>%
+  rename(Datetime = date_time, 
+         turbidity = median_ts087_ysi_6136_turb_inst,
+         turbidity2 = ts213_ysi_exo_turb_inst,
+         turbidity3 = lower_4_ft_from_bed_turb_inst)%>%
+  mutate(station = "SRV",
+         date = date(Datetime),
+         datetime = Datetime,
+         turb = ifelse((is.na(turbidity) & is.na(turbidity2)), turbidity3, 
+                       ifelse(is.na(turbidity), turbidity2, turbidity))) %>%
+  filter(turb>=0) %>%
+  select(datetime, date, station, turb) 
+
+summary(SRV)
+
+
+```
+
+#### Combine data, calculate daily mean max and min
+```{r}
+turbidity <- rbind(SRV, DWC, turb_clean) %>%
+  group_by(date, station) %>%
+  summarize(mean = mean(turb, na.rm = TRUE),
+            max = max(turb, na.rm = TRUE),
+            min = min(turb, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(month = month(date),
+         wy = year(date),
+         julian = yday(date),
+         date2 = paste0(1980, "-", month, "-", day(date)),
+         date2 = lubridate::ymd(date2)) %>%
+  mutate(station_name = case_when(station == "DWC" ~ "DW Shipping Channel",
+                                     station == "SRV" ~ "Rio Vista",
+                                     station == "MAL" ~ "Mallard Island",
+                                     station == "SJR" ~ "SJR Vernalis")) %>%
+  filter(month>2 & month < 7,
+         !is.na(date)) %>%
+  ungroup() %>%
+  left_join(wytype) %>%
+  mutate(wytype = ifelse(station == "SJR", SanJoaquinValley, SacramentoValley)) %>%
+  filter(!is.na(wytype)) %>%
+  mutate(fWY = factor(wy),
+         index = 1:n()) %>%
+  select(index, everything())
+```
+
+## Plot data
+```{r}
+# Point plot by station and water year type
+ggplot(turbidity, aes(date2, mean, color = fWY)) + geom_line() + geom_point(size = 0.8) + theme_bw() + facet_grid(station~wytype, scales = "free_y")
+
+# Boxplot
+ggplot(turbidity, aes(factor(month), mean, fill = station)) + geom_boxplot() + theme_bw() + facet_grid(~wytype, scales = "free_y")
+
+```
+
+```{r}
+turbidity %>%
+  filter(wytype == "BN" & mean >75) 
+
+outflow_clean %>%
+  filter(month %in% c(5,6) & year == 2010)
+
+flows <- rbind(outflow_clean, flow_vernalis_daily)
+
+turbidity_flow <- left_join(turbidity, flows) %>%
+  filter(station %in% c("SJR", "MAL"),
+         wy < 2019)
+
+long <- turbidity_flow %>%
+  rename(meanTurb = mean) %>%
+  select(date, date2, wy, station, meanTurb, flow) %>%
+  pivot_longer(cols = c("meanTurb", "flow"), names_to = "parameter", values_to = "value")
+```
+
+```{r}
+
+# These look off
+ggplot(long %>% filter(wy == 2010 & station == "MAL")) + 
+  geom_line(aes(date, value, color = parameter)) +
+  facet_wrap(~parameter, scales = "free_y", nrow = 2) + theme_bw()
+ggplot(turbidity_flow %>% filter(wy == 2010 & station == "MAL")) + 
+  geom_point(aes(flow, meanTurb, color = month))
+
+# These look off
+ggplot(long %>% filter(wy == 2009 & station == "SJR")) + 
+  geom_line(aes(date, value, color = parameter)) +
+  geom_point(aes(date, value, color = parameter)) +
+  facet_wrap(~parameter, scales = "free_y", nrow = 2) + theme_bw()
+ggplot(turbidity_flow %>% filter(wy == 2009 & station == "SJR")) + 
+  geom_point(aes(flow, meanTurb, color = month))
+
+# These look fine
+ggplot(long %>% filter(wy == 2018 & station == "SJR")) + 
+  geom_line(aes(date, value, color = parameter)) +
+  facet_wrap(~parameter, scales = "free_y", nrow = 2) + theme_bw()
+ggplot(turbidity_flow %>% filter(wy == 2018 & station == "SJR")) + 
+  geom_point(aes(flow, meanTurb, color = month))
+
+# Unsure - filtering this year out
+ggplot(long %>% filter(wy == 2007 & station == "SJR")) + 
+  geom_line(aes(date, value, color = parameter)) +
+  geom_point(aes(date, value, color = parameter)) +
+  facet_wrap(~parameter, scales = "free_y", nrow = 2) + theme_bw()
+ggplot(turbidity_flow %>% filter(wy == 2007 & station == "SJR")) + 
+  geom_point(aes(flow, meanTurb, color = month))
+
+turb_SJR_2007 <- rbind(SRV, DWC, turb_clean) %>%
+  mutate(year = year(date)) %>%
+  filter(year == 2007 & station == "SJR")
+
+ggplot(turb_SJR_2007) + geom_point(aes(x = datetime, y = turb))
+```
+
+## Remove outliers
+```{r}
+turbidity_f <- turbidity %>%
+  filter(!(index %in% c(738, 741, 744, 411, 413))) %>%
+  filter(wy > 2009) %>%
+  mutate(wyclass = case_when(wytype %in% c("AN", "BN")~"Above/Below Normal",
+                wytype %in% c("C", "D")~"Critical/Dry",
+                wytype == "W" ~ "Wet"))
+```
+
+## Clean plot for LTO
+```{r}
+(plot_turbidity <- ggplot(turbidity_f, aes(date2, mean, color = fWY)) + geom_line() + geom_point(size = 0.8) + 
+  facet_grid(station_name~wyclass, scales = "free_y") +
+  labs(y = "Mean Daily Turbidity (FNU)", color = "Water Year") + 
+  viridis::scale_color_viridis(option = "turbo", discrete = TRUE) + 
+  theme_bw() +
+    theme(strip.text = element_text(size = 7.5),
+          axis.text = element_text(size = 9),
+          axis.title.x = element_blank()))
+```
+
+```{r}
+png(filename = here("figures", "turbidity_2010-2021.png"), width = 8, height = 5, units = "in", pointsize = 10, family = "sans", res = 300)
+plot_turbidity
+dev.off()
+```
+
