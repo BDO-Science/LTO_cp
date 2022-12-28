@@ -1,0 +1,118 @@
+---
+title: "summer_plot_salinity_SMSCG"
+author: "Catarina Pien"
+date: '2022-12-28'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sharpshootR)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(dataRetrieval)
+library(here)
+```
+
+Download data
+
+```{r}
+wytype <- read.csv("data_raw/WYType.csv") %>%
+  select(WY, Basin, Yr.type) %>%
+  mutate(wy = as.numeric(WY)) %>%
+  pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
+```
+
+
+```{r}
+stations_sal <- c("GZL", "BDL")
+
+sal <- lapply(stations_sal, 
+                 function(x){
+                 CDECquery(id = x, sensor = 100, interval = "E", start = "2000-01-01",
+                              end = "2022-12-01")})
+sal_df <- bind_rows(sal)%>%
+    mutate(EC = value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime),
+           month = as.numeric(month)) %>%
+  filter(EC>=0) %>%
+  select(datetime,date,month, wy = water_year, wday = water_day, station = station_id, EC) %>%
+  filter(!is.na(station),
+         !is.na(date))
+```
+
+```{r}
+salinity <- sal_df %>%
+  group_by(date, month, wy, wday, station) %>%
+  summarize(meanSal = mean(EC, na.rm = TRUE),
+            maxSal = max(EC, na.rm = TRUE),
+            minSal = min(EC, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(date2 = paste0(1980, "-", month, "-", day(date)),
+         date2 = lubridate::ymd(date2)) %>%
+  mutate(station_name = case_when(station == "BDL" ~ "Beldon Landing",
+                                  station == "GZL" ~ "Grizzly Bay")) %>%
+  filter(month>5 & month < 12,
+         !is.na(date)) %>%
+  ungroup() %>%
+  left_join(wytype) %>%
+  mutate(fWY = factor(wy),
+         index = 1:n()) %>%
+  rename(wytype = SacramentoValley) %>%
+  select(index, everything()) %>%
+  select(-SanJoaquinValley) %>%
+  filter(!is.na(wytype))
+```
+
+```{r}
+plot_sal <- ggplot2::ggplot(data=salinity,aes(x=date2,y=meanSal,group=wy,color=wytype))+
+  ggplot2::theme_bw()+
+  ggplot2::geom_line(alpha=0.5)+
+  facet_grid(wytype~station_name)+
+  geom_smooth(aes(group=wytype),se=F)+
+  ggplot2::scale_colour_manual(values = c("#003E51","#007396","#C69214","#FF671F","#9A3324")) +
+  ggplot2::scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1),name="",labels=c(2017:2022)) +
+  ggplot2::theme(plot.title=element_text(size=9), 
+                 axis.text.x=element_text(size=8, color="black",angle=90), 
+                 axis.text.y = element_text(size=9, color="black"), 
+                 axis.title.x = element_text(size = 10, angle = 00), 
+                 axis.title.y = element_text(size = 10, angle = 90),
+                 strip.text = element_text(size = 10),
+                 legend.position = "none",
+                 strip.background = element_rect(size=0.3)) + 
+  ggplot2::ylab("Salinity (uS/cm)")+
+  ggplot2::xlab(NULL)+
+  ggplot2::scale_x_date(date_labels = "%b",date_breaks  ="1 month")
+
+plot_sal
+```
+
+```{r}
+png(here("figures","salinity_BDL_GZL.tiff"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_sal)
+dev.off()
+```
+
+```{r}
+unique(salinity$wy)
+
+BDL <- filter(salinity, station == "BDL") 
+GZL <- filter(salinity, station == "GZL")
+unique(BDL$wy)
+unique(GZL$wy)
+```
+
