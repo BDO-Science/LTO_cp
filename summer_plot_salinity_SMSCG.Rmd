@@ -7,6 +7,10 @@ editor_options:
   chunk_output_type: console
 ---
 
+# Summer-Fall Habitat Appendix Code
+
+Assignment to plot turbidity and SMSCG operations for the Summer-Fall X2 Appendix (Appendix K)
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -19,9 +23,8 @@ library(dplyr)
 library(tidyr)
 library(dataRetrieval)
 library(here)
+library(readr)
 ```
-
-Download data
 
 ```{r}
 wytype <- read.csv("data_raw/WYType.csv") %>%
@@ -30,14 +33,16 @@ wytype <- read.csv("data_raw/WYType.csv") %>%
   pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
 ```
 
+## Salinity Data
+### CDEC download
 
 ```{r}
 stations_sal <- c("GZL", "BDL")
 
-sal <- lapply(stations_sal, 
-                 function(x){
-                 CDECquery(id = x, sensor = 100, interval = "E", start = "2000-01-01",
-                              end = "2022-12-01")})
+# sal <- lapply(stations_sal, 
+#                  function(x){
+#                  CDECquery(id = x, sensor = 100, interval = "E", start = "2000-01-01",
+#                               end = "2022-12-01")})
 sal_df <- bind_rows(sal)%>%
     mutate(EC = value,
            datetime = ymd_hms(datetime),
@@ -47,9 +52,14 @@ sal_df <- bind_rows(sal)%>%
   select(datetime,date,month, wy = water_year, wday = water_day, station = station_id, EC) %>%
   filter(!is.na(station),
          !is.na(date))
+
+saveRDS(sal_df, "data_raw/salinity_cdec_GZL_BDL_2000-2022.rds")
 ```
 
+### Clean data
 ```{r}
+# sal_df <- readRDS("data_raw/salinity_cdec_GZL_BDL_2000-2022.rds")
+
 salinity <- sal_df %>%
   group_by(date, month, wy, wday, station) %>%
   summarize(meanSal = mean(EC, na.rm = TRUE),
@@ -72,6 +82,7 @@ salinity <- sal_df %>%
   filter(!is.na(wytype))
 ```
 
+### Plot data
 ```{r}
 plot_sal <- ggplot2::ggplot(data=salinity,aes(x=date2,y=meanSal,group=wy,color=wytype))+
   ggplot2::theme_bw()+
@@ -95,6 +106,7 @@ plot_sal <- ggplot2::ggplot(data=salinity,aes(x=date2,y=meanSal,group=wy,color=w
 plot_sal
 ```
 
+### Save plot
 ```{r}
 png(here("figures","salinity_BDL_GZL.tiff"),
      type="cairo",
@@ -114,5 +126,76 @@ BDL <- filter(salinity, station == "BDL")
 GZL <- filter(salinity, station == "GZL")
 unique(BDL$wy)
 unique(GZL$wy)
+```
+
+## SMSCG
+```{r}
+ops <-readr::read_csv("https://portal.edirepository.org/nis/dataviewer?packageid=edi.876.5&entityid=8585dd61b0a275f93492d36795cd8a53")
+```
+
+```{r}
+ops <- ops %>%
+  mutate(year = year(Date),
+         Operating = ifelse(grepl("OP", Gate1) | grepl("OP", Gate2) | grepl( "OP", Gate3), "Operating", "Not Operating"),
+         OpDegree = ifelse(Operating == "Not Operating", "None",
+                           ifelse(Operating == "Operating" & (Gate1 %in% c("C", "O", "M-OP") |Gate2 %in% c("C", "O", "M-OP")|Gate3 %in% c("C", "O", "M-OP")), "Partial", "Full" )))
+```
+
+```{r}
+ops_summary <- ops %>%
+  group_by(Operating, year, OpDegree) %>%
+  summarize(n = n()) %>%
+  filter(year>1989)
+
+ops_operating <- ops_summary %>%
+  filter(Operating == "Operating")
+```
+
+```{r}
+(plot_smscg <- ggplot(ops_operating) + geom_point(aes(year, n, color = OpDegree)) +
+  labs(y = "Days Operational", x = "Year", color = "Operational Degree") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(1990,2022,1)) + 
+  scale_y_continuous(breaks = seq(0,350, 25)) + 
+  scale_color_manual(values = c("orange", "blue"))+
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "top"))
+
+(plot_smscg_bar <- ggplot(ops_operating) + geom_col(aes(year, n, fill = OpDegree), color = "black") +
+  labs(y = "Days Operational", x = "Year", fill = "Operational Degree") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(1990,2022,2)) + 
+  scale_y_continuous(breaks = seq(0,350, 50)) + 
+  scale_fill_manual(values = c("orange", "blue"))+
+  theme(axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+        legend.text = element_text(size = 11),
+        legend.title = element_text(size = 12),
+        legend.position = "top",
+        axis.title.x = element_blank()))
+```
+
+```{r}
+png(here("figures","SMSCG.png"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_smscg)
+dev.off()
+```
+
+```{r}
+png(here("figures","SMSCG_bar.png"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_smscg_bar)
+dev.off()
 ```
 
