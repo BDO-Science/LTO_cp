@@ -1,0 +1,167 @@
+---
+title: "spring_yolo_salmon_CPUE"
+author: "Catarina Pien"
+date: '2023-01-04'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(contentid)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(here)
+```
+
+```{r}
+# store cached version
+(ybfmp_length_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=402732c0e6c782db8b8229c3b9310afa"))
+(ybfmp_wq_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=4488201fee45953b001f70acf30f7734"))
+(ybfmp_sites_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=89146f1382d7dfa3bbf3e4b1554eb5cc"))
+(ybfmp_catch_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=b2b92d9dbfb78cfb1a5716174dfceab1"))
+(ybfmp_tax_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=405122cb55c6996661c0dee20ab77a6c"))
+(ybfmp_sample_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.233.3&entityid=1ca343f66d18c8cde0ec58ad893aad10"))
+
+# cached files (shouldn't have to run the above once cached)
+ybfmp_length_file <- contentid::resolve("hash://sha256/71c3a4667bd3a00859902018ea257c9914b63f1111d276d2cdd960025247c980")
+ybfmp_wq_file <- contentid::resolve("hash://sha256/17fc26c768fa24c65016cfe3d4e8d579b909180a7e349386efa7e24e1772def2")
+ybfmp_sites_file <- contentid::resolve("hash://sha256/acc9940abf5662e81ee594553e7dc46a05c4cace9c924dbf5352c0544bc7a481")
+ybfmp_catch_file <- contentid::resolve("hash://sha256/110b7e3a5cac91b6a2619e2421c7c19f22fb4cc84335b1cc2e5d749080dc9d92")
+ybfmp_tax_file <- contentid::resolve("hash://sha256/2d8de80b2549d9f4c5222f54f8f25bb518966899d27119be77cb2bca8786f645")
+ybfmp_sample_file <- contentid::resolve("hash://sha256/114456300e69d211865193888a4dc2fc10bfa8121ca0fc78013022173fc062fe")
+
+```
+
+# read files
+```{r}
+
+ybfmp_length0 <- read_csv(ybfmp_length_file)
+ybfmp_wq0 <- read_csv(ybfmp_wq_file)
+#ybfmp_sites0 <- read_csv(ybfmp_sites_file)
+ybfmp_catch0 <- read_csv(ybfmp_catch_file)
+#ybfmp_tax0 <- read_csv(ybfmp_tax_file)
+ybfmp_sample0 <- read_csv(ybfmp_sample_file)
+ybfmp_sample <- ybfmp_sample0 
+
+wytype <- read.csv("data_raw/WYType.csv") %>%
+  select(WY, Basin, Yr.type) %>%
+  mutate(WY = as.numeric(WY)) %>%
+  pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "WY")
+
+
+```
+
+# join and clean
+```{r}
+data0 <- left_join(ybfmp_wq0, ybfmp_catch0)
+data <- left_join(data0, ybfmp_sample0) %>%
+  mutate(Datetime = mdy_hm(Datetime),
+        SampleDate = mdy(SampleDate),
+        Year = year(SampleDate),
+        Month = month(SampleDate),
+        fMonth = month(SampleDate, label = TRUE),
+        Date2 = paste0(1980, "-", Month, "-", day(SampleDate)),
+        Date2 = lubridate::ymd(Date2),
+        WY = ifelse(Month > 9, Year + 1, Year),
+        Jday = yday(SampleDate))
+
+```
+
+# filter down data 
+```{r}
+gear_notincl_yb <- c("SEINENCL", "SEINCOVE", "SEIN30", "SEIN100")
+stations_notincl_yb <- c("CCS1", "CCS2", "CCS3", "CCS4", "PCS",  "SB1", "SB2")
+
+data_filtered <- data %>%
+  filter(!StationCode %in% c(stations_notincl_yb),
+         !GearCode %in% c(gear_notincl_yb))
+
+chn <- data_filtered %>%
+  filter(OrganismCode == "CHN",
+         WY>1999,  WY < 2020, Month>2 & Month < 7) 
+
+# effort data are not good before 2010 so filtering to that.
+rstr <- chn %>%
+  filter(Year > 2009) %>%
+  filter(MethodCode == "RSTR") %>%
+    mutate(cpue = Count/TrapHours, na.rm = TRUE) %>%
+  group_by(WY, Month, fMonth, MethodCode) %>%
+  summarize(sumCPUE = sum(cpue)) %>%
+  ungroup()
+
+# seine effort uses seine volume.
+seine <- chn %>%
+  filter(MethodCode == "BSEIN") %>%
+mutate(cpue = Count/SeineVolume, na.rm = TRUE)%>%
+  group_by(WY, Month, fMonth, MethodCode) %>%
+  summarize(sumCPUE = sum(cpue)) %>%
+  ungroup()
+
+# recombine the data together so they can be faceted.
+data_cpue <- rbind(rstr, seine) %>%
+  left_join(wytype, by = "WY") %>%
+  rename(wytype = SacramentoValley) %>%
+  mutate(wytype = factor(wytype, levels = c("W", "AN", "BN", "D", "C")),
+         MethodCode = ifelse(grepl("BSEIN", MethodCode), "Beach Seine", "Rotary Screw Trap"))
+```
+
+# plot
+```{r}
+# plot by month
+(plot_cpue_month <- ggplot(data_cpue) + 
+  geom_boxplot(aes(x = fMonth, y = sumCPUE, fill = fMonth)) +
+  facet_grid(MethodCode~wytype, scales = "free_y") + 
+  labs(y = "Sum CPUE", fill = "Month") +
+  theme_bw() +
+  theme(strip.text = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90)))
+
+# plot by year
+(plot_cpue_year <- ggplot(data_cpue) + 
+  geom_col(aes(x = WY, y = sumCPUE, fill = fMonth), color = "black") +
+  facet_wrap(~MethodCode, scales = "free_y", nrow = 2) + 
+  labs(y = "Sum CPUE", fill = "Month") +
+ # scale_x_date(scales::date_breaks = "1 year") + 
+  scale_x_continuous(breaks = seq(2000,2021,1)) + 
+  theme_bw() +
+  theme(strip.text = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "top",
+        legend.text = element_text(size = 10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90)))
+```
+
+# save plot
+```{r}
+png(here("figures","yolo_cpue_month.png"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_cpue_month)
+dev.off()
+
+png(here("figures","yolo_cpue_year.png"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_cpue_year)
+dev.off()
+```
