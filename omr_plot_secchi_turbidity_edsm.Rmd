@@ -1,0 +1,131 @@
+---
+title: "omr_plot_secchi_turbidity_edsm"
+author: "Catarina Pien"
+date: '2023-01-16'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(patchwork)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(contentid)
+library(janitor)
+```
+
+# Read EDSM Data
+```{r}
+twentymm_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.415.8&entityid=d468c513fa69c4fc6ddc02e443785f28")
+kdtr_url <- contentid::store("https://portal.edirepository.org/nis/dataviewer?packageid=edi.415.8&entityid=4d7de6f0a38eff744a009a92083d37ae")
+
+twentymm_file <- contentid::resolve("hash://sha256/8a8cccee8088048b54d1d8a34fd659a7c04035df02afb10eb5d84575d586c7e8")
+kdtr_file <- contentid::resolve("hash://sha256/7914232bff5ec6e362f1531698f197a001ee746c13c8d9820da815e46678efba")
+```
+
+```{r}
+edsm_20mm <- read_csv(twentymm_file) %>%
+  filter(!(TurbidityTop > 150 & RegionCode == "South")) %>%
+  mutate(Smelt = ifelse(IEPFishCode == "DELSME", "Yes", "No"))
+edsm_kdtr <- read_csv(kdtr_file) %>%
+  filter(ForkLength>0)%>%
+  mutate(Smelt = ifelse(IEPFishCode == "DELSME", "Yes", "No"))
+
+smelt <- edsm_20mm %>%
+  filter(IEPFishCode == "DELSME") %>%
+  mutate(Count = 1)
+
+smelt_kdtr <- edsm_kdtr %>%
+  filter(IEPFishCode == "DELSME") %>%
+  mutate(Count = 1)
+```
+
+# Secchi vs Turbidity
+```{r}
+sec_turb <- ggplot(edsm_20mm) + 
+  geom_point(aes(Secchi, TurbidityTop)) + 
+  geom_smooth(aes(Secchi, TurbidityTop, color = RegionCode)) + 
+  facet_wrap(~RegionCode, scales = "free") + 
+  theme_bw() +
+  theme(legend.position = "none")
+
+sec_turb2 <- ggplot(edsm_kdtr) + 
+  geom_point(aes(Secchi, Turbidity)) +
+  geom_smooth(aes(Secchi, Turbidity, color = RegionCode)) + 
+  facet_wrap(~RegionCode, scales = "free") + 
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+```{r}
+(sec_turb_smelt <- ggplot() + 
+  geom_point(data = edsm_20mm, aes(Secchi, TurbidityTop), size = 0.8, color = "mistyrose3", shape = 20) + 
+    geom_point(data = smelt, aes(Secchi, TurbidityTop), size = 2, color = "sienna2", shape = 17) + 
+  geom_smooth(data = edsm_20mm, aes(Secchi, TurbidityTop)) + 
+  facet_wrap(~RegionCode, scales = "free") + 
+  scale_size_manual(values = c(0.8, 2)) + 
+   scale_color_manual(values = c("mistyrose3", "sienna2"))+
+  theme_bw()+
+  theme(legend.position = "none"))
+
+(sec_turb_smelt2 <- ggplot() + 
+  geom_point(data = edsm_kdtr, aes(Secchi, Turbidity), size = 0.8, color = "mistyrose3", shape = 20 ) +
+  geom_point(data = smelt_kdtr, aes(Secchi, Turbidity), size = 2, color = "sienna2", shape = 17) + 
+  geom_smooth(data = edsm_kdtr, aes(Secchi, Turbidity)) + 
+  facet_wrap(~RegionCode, scales = "free") + 
+  theme_bw()+
+  theme(legend.position = "none"))
+```
+
+#Plus Smelt
+## 20mm
+```{r}
+ggplot(smelt) + 
+  geom_point(aes(Secchi, TurbidityTop)) + 
+  geom_point(aes(Secchi, Count), color = "blue") +
+  theme_bw()
+
+# Histograms ---------------------------
+smelt_size <- ggplot(smelt) + geom_histogram(aes(ForkLength), binwidth = 5, color = "gray90", fill = "slategray3") + theme_bw()
+smelt_turb <- ggplot(smelt) + geom_histogram(aes(TurbidityTop), binwidth = 5, color = "gray90") + theme_bw()
+smelt_secchi <- ggplot(smelt) + geom_histogram(aes(Secchi), binwidth = 0.05, color = "gray90") + theme_bw()
+
+# Combined Plots -----------------------
+(plot_20mm <- sec_turb_smelt + smelt_size + smelt_turb + smelt_secchi + plot_layout(nrow = 4, heights = c(2.5, 1, 1, 1)))
+```
+
+## KDTR
+```{r}
+ggplot(smelt_kdtr) + 
+  geom_point(aes(Secchi, Turbidity)) + 
+  geom_point(aes(Secchi, Count), color = "blue") +
+  theme_bw()
+
+# Histograms ---------------------------
+smelt_size2 <- ggplot(smelt_kdtr) + geom_histogram(aes(ForkLength), binwidth = 5, color = "gray90", fill = "slategray3") + theme_bw()
+
+smelt_turb2 <- ggplot(smelt_kdtr) + geom_histogram(aes(Turbidity), binwidth = 5, color = "gray90") + theme_bw()
+
+smelt_secchi2 <- ggplot(smelt_kdtr) + geom_histogram(aes(Secchi), binwidth = 0.05, color = "gray90") + theme_bw()
+
+# Combined Plots ----------------------
+(plot_kdtr <- sec_turb_smelt2 + smelt_size2 + smelt_turb2 + smelt_secchi2 + plot_layout(nrow = 4, heights = c(2.5, 1, 1, 1)))
+```
+
+# Write plots
+```{r}
+png(filename = here("figures", "edsm_20mm_turbidity.png"), width = 6.5, height = 8.5, units = "in", pointsize = 10, family = "sans", res = 300)
+plot_20mm
+dev.off()
+
+png(filename = here("figures", "edsm_kdtr_turbidity.png"), width = 6.5, height = 8.5, units = "in", pointsize = 10, family = "sans", res = 300)
+plot_kdtr
+dev.off()
+```
+
