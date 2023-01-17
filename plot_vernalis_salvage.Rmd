@@ -94,7 +94,7 @@ flow_salvage <- left_join(flow_vernalis_daily, salvage_daily) %>%
 #   theme_bw()
 ```
 
-```{r, echo = FALSE, fig.cap= "Salvage as a Function of Vernalis Flow", width = 8, height = 6}
+```{r, echo = FALSE, fig.cap= "Vernalis Flow and Delta Smelt Salvage, WY 2000-2022. Black points are Flow, while colored points are Salvage multiplied by 100 (to better show up visually).", width = 8, height = 6}
 ggplot(flow_salvage) + 
   geom_point(aes(Date, Flow), size = 0.8, color = "gray30") +
   geom_point(aes(Date, salvageSc, color = threshold), size = 0.8) + 
@@ -123,11 +123,11 @@ ggplot(incidents) + geom_col(aes(WY, Salvage)) +
 tab <- incidents %>%
   select(WY, Salvage) %>%
   group_by(WY) %>%
-  summarize(AnnualSalvage = sum(Salvage, na.rm = TRUE)) %>%
+  summarize(SumSalvage = sum(Salvage, na.rm = TRUE)) %>%
   ungroup() %>%
   mutate(WY = factor(WY)) 
 
 flextable(tab) %>%
-  set_caption("Annual Salvage During Periods Where VNS >= 8000 cfs")
+  set_caption("Summed Salvage During Periods Where VNS >= 8000 cfs")
 ```
 
