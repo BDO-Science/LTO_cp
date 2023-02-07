@@ -1,0 +1,199 @@
+---
+title: "spring_plot_salinity_temp"
+author: "Catarina Pien"
+date: '2023-02-01'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Plot Salinity and Water Temperature Data for Data Section of Spring Outflow Appendix of PDA
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(here)
+```
+
+
+```{r}
+wytype <- read.csv("data_raw/WYType.csv") %>%
+  select(WY, Basin, Yr.type) %>%
+  mutate(wy = as.numeric(WY)) %>%
+  pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
+```
+
+## Process Salinity data
+```{r}
+sal_spring <- readRDS("data_raw/salinity_cdec_2000-2022.rds") %>%
+  filter(!station %in% c("SJJ"))%>%
+  filter(EC > 0 & EC < 50000) %>%
+  filter(!(wy == 2008 & EC<10000 & station == "MRZ"),
+         !(wy == 2022 & EC <5000 & station == "MRZ" ))
+
+salinity <- sal_spring %>%
+  group_by(date, month, wy, station) %>%
+  summarize(meanSal = mean(EC, na.rm = TRUE),
+            maxSal = max(EC, na.rm = TRUE),
+            minSal = min(EC, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(date2 = paste0(1980, "-", month, "-", day(date)),
+         date2 = lubridate::ymd(date2)) %>%
+  mutate(station_name = case_when(station == "MRZ" ~ "Martinez",
+                                  station == "BDL" ~ "Beldon Landing",
+                                  station == "GZL" ~ "Grizzly Bay",
+                                  station == "MAL" ~ "Mallard Island",
+                                  station == "EMM" ~ "Emmaton")) %>%
+  filter(!is.na(date)) %>%
+  ungroup() %>%
+  left_join(wytype) %>%
+  mutate(fWY = factor(wy),
+         index = 1:n()) %>%
+  rename(wytype = SacramentoValley) %>%
+  select(index, everything()) %>%
+  select(-SanJoaquinValley) %>%
+  filter(!is.na(wytype)) %>%
+  mutate(wytype = factor(wytype, levels = c("C", "D", "BN","AN", "W")),
+         station_name = factor(station_name, levels = c("Martinez", "Grizzly Bay", "Beldon Landing", "Mallard Island", "Emmaton")))
+```
+
+```{r}
+mrz <- salinity %>%
+  filter(station_name == "Martinez" & wytype == "C" & meanSal <20000)
+
+mrz <- sal_spring %>%
+  filter(station == "MRZ" & EC < 1000)
+```
+
+### Plot data
+```{r}
+plot_sal <- ggplot2::ggplot(data=salinity,aes(x=date2,y=meanSal,group=wy,color=wytype))+
+  ggplot2::theme_bw()+
+  ggplot2::geom_line(alpha=0.5)+
+  facet_grid(wytype~station_name)+
+  geom_smooth(aes(group=wytype),se=F)+
+  ggplot2::scale_colour_manual(values = c("#003E51","#007396","#C69214","#FF671F","#9A3324")) +
+  ggplot2::scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1),name="",labels=c(2017:2022)) +
+  ggplot2::theme(plot.title=element_text(size=9), 
+                 axis.text.x=element_text(size=8, color="black",angle=90), 
+                 axis.text.y = element_text(size=9, color="black"), 
+                 axis.title.x = element_text(size = 10, angle = 00), 
+                 axis.title.y = element_text(size = 10, angle = 90),
+                 strip.text = element_text(size = 10),
+                 legend.position = "none",
+                 strip.background = element_rect(size=0.3)) + 
+  ggplot2::ylab("Salinity (uS/cm)")+
+  ggplot2::xlab(NULL)+
+  ggplot2::scale_x_date(date_labels = "%b",date_breaks  ="1 month")
+
+plot_sal
+```
+
+### Save plot
+```{r}
+png(here("figures","salinity_spring.tiff"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_sal)
+dev.off()
+```
+
+```{r}
+salinity %>%
+  group_by(station) %>%
+  summarize(firstDate = min(date),
+            lastDate = max(date))
+```
+
+## Process Temp data
+```{r}
+temp_spring <- readRDS("data_clean/filtered_temp_data_outflow.rds") %>%
+  mutate(month = month(Date),
+         year = year(Date),
+         wy = ifelse(month > 9, year + 1, year)) %>%
+  rename(station = Station, 
+         date = Date) %>%
+  filter(station != "RIV")
+
+temp <- temp_spring %>%
+  group_by(date, month, wy, station) %>%
+  summarize(meanTemp = mean(Temp_F, na.rm = TRUE),
+            maxTemp = max(Temp_F, na.rm = TRUE),
+            minTemp = min(Temp_F, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(date2 = paste0(1980, "-", month, "-", day(date)),
+         date2 = lubridate::ymd(date2)) %>%
+  mutate(station_name = case_when(station == "VNS" ~ "Vernalis",
+                                  station == "MRZ" ~ "Martinez",
+                                  station == "GZL" ~ "Grizzly Bay",
+                                  station == "BDL" ~ "Beldon Landing",
+                                  station == "MAL" ~ "Mallard Island",
+                                  station == "FPT" ~ "Freeport")) %>%
+  filter(!is.na(date)) %>%
+  ungroup() %>%
+  left_join(wytype) %>%
+  mutate(fWY = factor(wy),
+         index = 1:n()) %>%
+  rename(wytype = SacramentoValley) %>%
+  select(index, everything()) %>%
+  select(-SanJoaquinValley) %>%
+  filter(!is.na(wytype)) %>%
+  mutate(wytype = factor(wytype, levels = c("C", "D", "BN","AN", "W")),
+         station_name = factor(station_name, 
+                               levels = c("Vernalis", "Martinez",  
+                                          "Grizzly Bay", "Beldon Landing","Mallard Island",  "Freeport")))
+```
+
+### Plot data
+```{r}
+plot_temp <- ggplot2::ggplot(data=temp,aes(x=date2,y=meanTemp,group=wy,color=wytype))+
+  ggplot2::theme_bw()+
+  ggplot2::geom_line(alpha=0.5)+
+  facet_grid(wytype~station_name)+
+  geom_smooth(aes(group=wytype),se=F)+
+  ggplot2::scale_colour_manual(values = c("#003E51","#007396","#C69214","#FF671F","#9A3324")) +
+  ggplot2::scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1),name="",labels=c(2017:2022)) +
+  ggplot2::theme(plot.title=element_text(size=9), 
+                 axis.text.x=element_text(size=8, color="black",angle=90), 
+                 axis.text.y = element_text(size=9, color="black"), 
+                 axis.title.x = element_text(size = 10, angle = 00), 
+                 axis.title.y = element_text(size = 10, angle = 90),
+                 strip.text = element_text(size = 10),
+                 legend.position = "none",
+                 strip.background = element_rect(size=0.3)) + 
+  ggplot2::ylab("Water Temperature (°F)")+
+  ggplot2::xlab(NULL)+
+  ggplot2::scale_x_date(date_labels = "%b",date_breaks  ="1 month")
+
+plot_temp
+```
+
+
+### Save plot
+```{r}
+png(here("figures","temp_spring.tiff"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=5, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_temp)
+dev.off()
+```
+
+```{r}
+temp %>%
+  group_by(station) %>%
+  summarize(firstDate = min(date),
+            lastDate = max(date))
+```
