@@ -1,0 +1,77 @@
+---
+title: "get_salinity_data"
+author: "Catarina Pien"
+date: '2023-02-01'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+source("functions.R")
+library(sharpshootR)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(here)
+library(readr)
+```
+
+## Salinity Data
+### CDEC download
+
+* For SFHA: GZL, BDL
+* For Spring Outflow: MRZ, GZL, BDL, MAL, EMM
+* For OMR: Jersey Point (SJJ)
+
+```{r}
+stations_sal <- c("GZL", "BDL", "MRZ", "MAL", "EMM","SJJ")
+startDate = "2000-01-01"
+endDate = "2022-12-31"
+
+sal <- lapply(stations_sal,
+                 function(x){
+                 CDECquery(id = x, sensor = 100, interval = "E", start = startDate,
+                              end = endDate)})
+
+sal_df <- clean_cdec(cdec_df = sal) %>%
+  rename(EC = parameter)
+
+saveRDS(sal_df, "data_raw/salinity_cdec_2000-2022.rds", compress = "xz")
+```
+
+## Water temperature Data
+### Using pre-cleaned dataset
+
+```{r}
+stations_temp <- c("WLK", "FPT", "RIV", "GZL", "MAL", "VNS", "BDL", "MRZ")
+# Copied over data from another synthesis project with QA/QCed water temp data. Code available: https://github.com/catarfish/heatwaves
+temp <- readRDS("data_clean/Temp_filtered.rds") %>%
+  filter(Station %in% stations_temp) %>%
+  mutate(Temp_F = (Temp * 9/5) +32)
+
+unique(temp$Station)
+
+saveRDS(temp, "data_clean/filtered_temp_data_outflow.rds", compress = "xz")
+
+```
+
+# Read data - filter to stations of interest
+```{r}
+tempdata <- readRDS("data_clean/Temp_filtered.rds") %>%
+  filter(Station %in% stations_temp)
+latlons <- read.csv("https://portal.edirepository.org/nis/dataviewer?packageid=edi.591.2&entityid=a059f5eea4f8500fe1a43566451ec593")
+```
+
+# Make map
+```{r}
+sta_locations_sf <- latlons %>%
+  filter(Station %in% stations) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"),
+           crs = 4326)
+  
+mapview::mapView(sta_locations_sf, zcol = "Station")
+```
