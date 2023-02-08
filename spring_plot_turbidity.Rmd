@@ -103,6 +103,8 @@ turb_clean <- turb_df %>% left_join(turb_qc) %>%
 
 high <- filter(turb_clean, turb > 100 & month(date) > 2 & month(date) < 7)
 
+saveRDS(turb_clean, "data_raw/turbidity_cdec_MAL_SJR_spring.rds")
+
 ```
 
 ## Get flow for QA/QC
@@ -204,6 +206,8 @@ summary(SRV)
 
 #### Combine data, calculate daily mean max and min
 ```{r}
+turb_clean <- readRDS("data_raw/turbidity_cdec_MAL_SJR_spring.rds")
+
 turbidity <- rbind(SRV, DWC, turb_clean) %>%
   group_by(date, station) %>%
   summarize(mean = mean(turb, na.rm = TRUE),
@@ -305,10 +309,65 @@ turbidity_f <- turbidity %>%
   filter(wy > 2009) %>%
   mutate(wyclass = case_when(wytype %in% c("AN", "BN")~"Above/Below Normal",
                 wytype %in% c("C", "D")~"Critical/Dry",
-                wytype == "W" ~ "Wet"))
+                wytype == "W" ~ "Wet")) %>%
+  mutate(wytype = factor(wytype, levels = c("C", "D", "BN","AN", "W")))
 ```
 
-## Clean plot for LTO
+### Plot data
+```{r}
+plot_turb <- ggplot2::ggplot(data=turbidity_f,aes(x=date2,y=mean,group=wy,color=wytype))+
+  ggplot2::theme_bw()+
+  ggplot2::geom_line(alpha=0.5)+
+  facet_grid(station_name~wytype, scales = "free_y")+
+  geom_smooth(aes(group=wytype),se=F)+
+  ggplot2::scale_colour_manual(values = c("#003E51","#007396","#C69214","#FF671F","#9A3324")) +
+  ggplot2::scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1),name="",labels=c(2017:2022)) +
+  ggplot2::theme(plot.title=element_text(size=9), 
+                 axis.text.x=element_text(size=8, color="black",angle=90), 
+                 axis.text.y = element_text(size=9, color="black"), 
+                 axis.title.x = element_text(size = 10, angle = 00), 
+                 axis.title.y = element_text(size = 10, angle = 90),
+                 strip.text = element_text(size = 10),
+                 legend.position = "none",
+                 strip.background = element_rect(size=0.3)) + 
+  ggplot2::ylab("Turbidity (FNU)")+
+  ggplot2::xlab(NULL)+
+  ggplot2::scale_x_date(date_labels = "%b",date_breaks  ="1 month")
+
+plot_turb
+```
+
+
+### Save plot
+```{r}
+png(here("figures","turb_spring.png"),
+     type="cairo",
+     units="in", 
+     width=8, #10*1, 
+     height=7, #22*1, 
+     pointsize=5, #12, 
+     res=300)
+print(plot_turb)
+dev.off()
+```
+
+```{r}
+turbidity_f %>%
+  group_by(station) %>%
+  summarize(firstDate = min(date),
+            lastDate = max(date))
+```
+
+
+
+
+
+
+
+
+
+
+## Alternate plot for LTO
 ```{r}
 (plot_turbidity <- ggplot(turbidity_f, aes(date2, mean, color = fWY)) + geom_line() + geom_point(size = 0.8) + 
   facet_grid(station_name~wyclass, scales = "free_y") +
