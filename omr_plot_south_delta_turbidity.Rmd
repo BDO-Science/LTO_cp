@@ -1,0 +1,334 @@
+---
+title: "omr_plot_south_delta_turbidity"
+author: "Catarina Pien"
+date: '2023-01-04'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(dataRetrieval)
+library(sharpshootR)
+library(here)
+source("functions.R")
+```
+
+```{r}
+wytype <- read.csv("data_raw/WYType.csv") %>%
+  select(WY, Basin, Yr.type) %>%
+  mutate(wy = as.numeric(WY)) %>%
+  pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
+```
+
+```{r}
+Sys.setenv(TZ = 'America/Los_Angeles')
+```
+
+```{r}
+startDate = "2000-01-01"
+endDate = "2022-12-31"
+```
+
+# Download Wind Data
+* FRK, ANH, RRI, MSD, SJR, 
+```{r}
+wind.dir<- CDECquery("FRK", "10", "E", start = startDate,
+                              end = endDate)
+wind.sp<- CDECquery("FRK", "9", "E", start = startDate,
+                              end = endDate)
+
+wind_speed <- bind_rows(wind.sp)%>%
+    mutate(wind_speed = value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime),
+           month = as.numeric(month)) %>%
+  select(datetime,date,month, wy = water_year, station = station_id, wind_speed) %>%
+  filter(!is.na(station),
+         !is.na(date))
+
+wind_dir <- bind_rows(wind.dir)%>%
+    mutate(wind_dir = value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime),
+           month = as.numeric(month)) %>%
+  select(datetime,date,month, wy = water_year, station = station_id, wind_dir) %>%
+  filter(!is.na(station),
+         !is.na(date))
+
+wind_df <- left_join(wind_speed, wind_dir)
+```
+
+# Download Flow Data
+```{r}
+
+OSJ.flow<- f_get_NWIS_flow(siteNumbers = 11313452, startDate = startDate, endDate = endDate)
+
+flow_OSJ <- readRDS(here("data_raw", "USGS_NWIS_11313452_flow.rds")) %>%
+  rename(Datetime = date_time, 
+         flow = flow_inst)%>%
+  mutate(station = "OSJ",
+         date = date(Datetime),
+         datetime = Datetime) %>%
+  select(datetime, date, station, flow) %>%
+  pivot_longer(cols = flow,
+               names_to = "parameter",
+               values_to = "flow_OSJ") 
+```
+
+
+# Download Turbidity Data
+```{r}
+stations_turb <- c("BET", "PPT", "VCU", "FRK")
+stations_turb2 <- c("OBI", "HOL")
+
+turb <- lapply(stations_turb,
+                 function(x){
+                 CDECquery(id = x, sensor = 27, interval = "E", start = "2000-01-01",
+                              end = "2022-12-01")})
+turb_df <- bind_rows(turb)%>%
+    mutate(turbidity = value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime),
+           month = as.numeric(month)) %>%
+  filter(turbidity>=0) %>%
+  select(datetime,date,month, wy = water_year, station = station_id, turbidity) %>%
+  filter(!is.na(station),
+         !is.na(date))
+
+turb2 <- lapply(stations_turb2,
+                 function(x){
+                 CDECquery(id = x, sensor = 221, interval = "E", start = "2000-01-01",
+                              end = "2022-12-01")})
+turb_df2 <- bind_rows(turb2)%>%
+    mutate(turbidity = value,
+           datetime = ymd_hms(datetime),
+           date = date(datetime),
+           month = as.numeric(month)) %>%
+  filter(turbidity>0) %>%
+  select(datetime,date,month, wy = water_year, station = station_id, turbidity) %>%
+  filter(!is.na(station),
+         !is.na(date))
+
+turb_combined <- rbind(turb_df, turb_df2)
+
+saveRDS(turb_combined, "data_raw/turbidity_cdec_southdelta_2000-2022.rds")
+turb_combined <- readRDS("data_raw/turbidity_cdec_southdelta_2000-2022.rds")
+```
+
+# Impose some QC
+```{r}
+OBI <- turb_df2 %>%
+  filter(station == "OBI",
+         date == ymd("2011-02-12"))
+OBI_ca <- turb_df2_ca %>%
+  filter(station == "OBI",
+         date == ymd("2011-02-12"))
+```
+
+## Number of values in a day
+```{r}
+turb_qc <- turb_combined %>%
+  mutate(hour = hour(datetime)) %>%
+  group_by(station, wy, month, date, hour) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(-datetime) %>%
+  group_by(station, wy, month, date) %>%
+  summarise(total = n()) %>%
+  mutate(Flag_QC2 = ifelse(total < 20, "Y", "N"))  %>%
+  select(-total)
+
+turb_q1 <- turb_combined %>% left_join(turb_qc) %>%
+  filter(Flag_QC2 == "N") %>%
+  select(datetime,date,wy, month, station , turbidity)
+```
+
+## Check for repeating values
+
+```{r}
+repeating_vals = function(df, x){
+  df$same = ifelse(df$turbidity == lag(df$turbidity, 1, default = 0), 1L, 0L)
+  df = df %>%
+    mutate(issame = cumsum(df$same == 0L)) %>%
+    group_by(station, issame) %>%
+    mutate(flag = sum(same)+1 ) %>%
+    ungroup() %>%
+    mutate(Flag_repeats = ifelse(flag > x, "Y", "N"))
+  return(df)
+}
+```
+
+```{r}
+# Run function repeating values and get rid of the columns we don't need
+turb_q2 <- repeating_vals(df = turb_q1, x = 18) %>%
+  select(-flag, -issame, -same) %>%
+  rename(Flag_QC3 = Flag_repeats) 
+
+turb_q2_clean <- turb_q2 %>%
+  filter(Flag_QC3 == "N")
+
+# Flagged values
+turb_flagged <- turb_q2_clean %>%
+  filter(Flag_QC3 == "Y")
+```
+
+## Remove individual high values
+```{r}
+turb_clean <- turb_q2_clean %>%
+  filter(turbidity<200)
+
+saveRDS(turb_clean, "data_clean/clean_turbidity_south_delta_event.rds")
+```
+
+# Calculate Daily average
+```{r}
+spring_turb <- turb_clean %>%
+  filter(month < 6,
+         wy<2023) %>%
+  group_by(date, month, wy,  station) %>%
+  summarize(meanTurb = mean(turbidity)) %>%
+  ungroup() %>%
+  mutate(date2 = paste0(1980, "-", month, "-", day(date)),
+         date2 = lubridate::ymd(date2),
+         year = year(date),
+         fWY = factor(wy)) %>%
+ left_join(wytype) %>%
+rename(wytype = SacramentoValley) %>%
+  mutate(index = 1:n()) %>%
+  select(index, everything())
+```
+
+## Plot data
+```{r}
+ggplot(spring_turb) + geom_point()
+
+(plot_turbidity <- ggplot(spring_turb, aes(date2, meanTurb, color = fWY)) + 
+    geom_line() + 
+    geom_point(size = 0.8) + 
+  facet_grid(station~wytype, scales = "free_y") +
+  labs(y = "Mean Daily Turbidity (FNU)", color = "Water Year") + 
+  viridis::scale_color_viridis(option = "turbo", discrete = TRUE) + 
+  theme_bw() +
+    theme(strip.text = element_text(size = 7.5),
+          axis.text = element_text(size = 9),
+          axis.title.x = element_blank()))
+```
+
+# More QC - outliers
+```{r}
+high <- spring_turb %>%
+  filter(meanTurb>120)
+
+PPThigh <- spring_turb %>%
+  filter(station == "PPT" & month == 5 & wy == 2017)
+
+PPThigh <- turb_clean %>%
+  filter(station == "PPT" & month == 5 & wy == 2017)
+
+OBIhigh <- spring_turb %>%
+  filter(station == "OBI" & month == 4 & wy == 2018)
+# 3966-4004  
+
+OBIhigh <- turb_clean %>%
+  filter(station == "OBI" & month == 2 & wy == 2011)
+
+HOLhigh <- turb_clean %>%
+  filter(station == "HOL" & month == 2 & wy == 2011)
+
+
+FRKhigh <- turb_clean %>%
+  filter(station == "FRK" & month == 1 & wy == 2021) %>%
+  filter(turbidity > 50)
+```
+
+## Remove outliers
+```{r}
+spring_turb_clean <- spring_turb %>%
+  filter(!index %in% high$index) %>%
+  filter(!is.na(wytype))
+
+saveRDS(spring_turb_clean, "data_clean/clean_turbidity_south_delta_daily.rds")
+```
+
+## Plot
+```{r}
+(plot_turbidity <- ggplot(spring_turb_clean, aes(date2, meanTurb, color = fWY)) + 
+    geom_line() + 
+    geom_point(size = 0.8) + 
+  facet_grid(station~wytype, scales = "free_y") +
+  labs(y = "Mean Daily Turbidity (FNU)", color = "Water Year") + 
+  viridis::scale_color_viridis(option = "turbo", discrete = TRUE) + 
+  theme_bw() +
+    theme(strip.text = element_text(size = 9),
+          axis.text = element_text(size = 9.5),
+          axis.text.x = element_text(angle = 90),
+          axis.title.x = element_blank()))
+```
+
+```{r}
+png(filename = here("figures", "omr_turbidity_2008-2022.png"), width = 8, height = 6, units = "in", pointsize = 10, family = "sans", res = 300)
+plot_turbidity
+dev.off()
+```
+
+# Combine with wind data and flow data 
+
+* No flow at FRK so used OSJ
+
+```{r}
+FRK_turb <- turb_clean %>% filter(station == "FRK")
+FRK_data <- left_join(wind_df, FRK_turb)
+FRK_OSJ <- left_join(FRK_data, flow_OSJ %>% select(date, datetime, flow_OSJ)) %>%
+  select(-Flag_QC3) 
+FRK_OSJ_long <- FRK_OSJ %>%
+  pivot_longer(cols = c(wind_speed:flow_OSJ), names_to = "parameter", values_to = "value")
+
+FRK_OSJ_daily <- FRK_OSJ_long %>%
+  group_by(wy, month, date,  parameter) %>%
+  summarize(dailyMax = max(value, na.rm = TRUE),
+            dailyMean = mean(value, na.rm = TRUE),
+            dailyMin = min(value, na.rm = TRUE)) %>%
+  
+  filter(dailyMean<20000 & dailyMean > -20000,
+         wy < 2023) 
+
+FRK_OSJ_daily_wide <- FRK_OSJ_daily %>%
+  pivot_wider(cols = c())
+```
+
+```{r}
+ggplot(FRK_OSJ_daily %>% filter(parameter != "wind_dir")) + 
+  geom_point(aes(date, dailyMean, color = factor(wy))) + 
+   geom_line(aes(date, dailyMean, color = factor(wy))) + 
+  facet_wrap(~parameter, scales = "free_y", nrow = 4) +
+  scale_x_date(date_breaks = "3 months") + theme_bw() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(FRK_OSJ_daily %>% filter(parameter != "wind_dir")) + 
+  geom_point(aes(date, dailyMax, color = factor(wy))) + 
+   geom_line(aes(date, dailyMax, color = factor(wy))) + 
+  facet_wrap(~parameter, scales = "free_y", nrow = 4) +
+  scale_x_date(date_breaks = "3 months") + theme_bw() + theme(axis.text.x = element_text(angle = 90))
+```
+
+
+```{r}
+
+```
+
+
+
+# Next Steps:
+
+
+* Find some instances of turbidity peaks and check them against EDSM secchi depth? 
+* Check against flow and wind?? 
+* Reach out to USFWS about why they use secchi?

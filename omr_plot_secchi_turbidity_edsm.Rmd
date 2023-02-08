@@ -2,8 +2,10 @@
 title: "omr_plot_secchi_turbidity_edsm"
 author: "Catarina Pien"
 date: '2023-01-16'
-output: html_document
-editor_options: 
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
   chunk_output_type: console
 ---
 
