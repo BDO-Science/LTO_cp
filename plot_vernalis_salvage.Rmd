@@ -82,7 +82,11 @@ salvage_daily <- salvage_smelt %>%
 ```{r, echo = FALSE}
 flow_salvage <- left_join(flow_vernalis_daily, salvage_daily) %>%
   mutate(Salvage = replace(Salvage, is.na(Salvage), 0),
-          threshold = ifelse(Flow >= 8000, "VNS >= 8000", "VNS < 8000"),
+         vns_flow = ifelse(Flow >= 8000, "VNS >= 8000", 
+                                    "VNS < 8000"),
+          threshold = ifelse(Salvage == 0, "No salvage", 
+                             ifelse(Flow >= 8000, "VNS >= 8000", 
+                                    "VNS < 8000")),
          salvageSc = Salvage * 100) %>%
   filter(WY < 2023)
 
@@ -97,10 +101,10 @@ flow_salvage <- left_join(flow_vernalis_daily, salvage_daily) %>%
 ```{r, echo = FALSE, fig.cap= "Vernalis Flow and Delta Smelt Salvage, WY 2000-2022. Black points are Flow, while colored points are Salvage multiplied by 100 (to better show up visually).", width = 8, height = 6}
 ggplot(flow_salvage) + 
   geom_point(aes(Date, Flow), size = 0.8, color = "gray30") +
-  geom_point(aes(Date, salvageSc, color = threshold), size = 0.8) + 
+  geom_point(aes(Date, salvageSc, color = threshold), size = 1, shape = 24) + 
   geom_hline(yintercept = 8000, color = "red") + 
   scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = c(0,0)) + 
-  scale_color_manual(values = c("slategray2", "goldenrod2"))+
+  scale_color_manual(values = c("gray", "slategray3", "goldenrod2"))+
   labs(y = "Vernalis Flow (cfs)", color = "Salvage") +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
@@ -110,7 +114,7 @@ ggplot(flow_salvage) +
 
 ```{r, echo = FALSE, fig.cap = "Incidents of Salvage when Vernalis Flow >= 8000 cfs"}
 incidents <- flow_salvage %>%
-  filter(threshold == "VNS >= 8000")
+  filter(vns_flow == "VNS >= 8000")
 
 ggplot(incidents) + geom_col(aes(WY, Salvage)) + 
   scale_x_continuous(breaks = seq(2000,2022,1)) + 
@@ -123,11 +127,13 @@ ggplot(incidents) + geom_col(aes(WY, Salvage)) +
 tab <- incidents %>%
   select(WY, Salvage) %>%
   group_by(WY) %>%
-  summarize(SumSalvage = sum(Salvage, na.rm = TRUE)) %>%
+  summarize(SumSalvage = sum(Salvage, na.rm = TRUE),
+            DaysAboveFlowThreshold = n()) %>%
   ungroup() %>%
   mutate(WY = factor(WY)) 
 
 flextable(tab) %>%
-  set_caption("Summed Salvage During Periods Where VNS >= 8000 cfs")
+  set_caption("Summed Salvage During Periods Where VNS >= 8000 cfs") %>%
+  width(width = c(0.5,1.5, 2))
 ```
 
