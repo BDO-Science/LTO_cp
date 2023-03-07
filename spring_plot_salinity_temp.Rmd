@@ -147,7 +147,7 @@ temp <- temp_spring %>%
   select(index, everything()) %>%
   select(-SanJoaquinValley) %>%
   filter(!is.na(wytype)) %>%
-  mutate(wytype = factor(wytype, levels = c("C", "D", "BN","AN", "W")),
+   mutate(wytype = factor(wytype, levels = c("W", "AN", "BN","D", "C")),
          station_name = factor(station_name, 
                                levels = c("Vernalis", "Martinez",  
                                           "Grizzly Bay", "Beldon Landing","Mallard Island",  "Freeport")))

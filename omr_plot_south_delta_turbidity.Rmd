@@ -65,6 +65,7 @@ wind_dir <- bind_rows(wind.dir)%>%
          !is.na(date))
 
 wind_df <- left_join(wind_speed, wind_dir)
+saveRDS(wind_cf, "data_raw/wind_FRK_2000_2022.rds")
 ```
 
 # Download Flow Data
@@ -90,10 +91,10 @@ flow_OSJ <- readRDS(here("data_raw", "USGS_NWIS_11313452_flow.rds")) %>%
 stations_turb <- c("BET", "PPT", "VCU", "FRK")
 stations_turb2 <- c("OBI", "HOL")
 
-turb <- lapply(stations_turb,
-                 function(x){
-                 CDECquery(id = x, sensor = 27, interval = "E", start = "2000-01-01",
-                              end = "2022-12-01")})
+# turb <- lapply(stations_turb,
+#                  function(x){
+#                  CDECquery(id = x, sensor = 27, interval = "E", start = "2000-01-01",
+#                               end = "2022-12-01")})
 turb_df <- bind_rows(turb)%>%
     mutate(turbidity = value,
            datetime = ymd_hms(datetime),
@@ -124,7 +125,7 @@ saveRDS(turb_combined, "data_raw/turbidity_cdec_southdelta_2000-2022.rds")
 turb_combined <- readRDS("data_raw/turbidity_cdec_southdelta_2000-2022.rds")
 ```
 
-# Impose some QC
+# Impose some QC (Don't need to re-run)
 ```{r}
 OBI <- turb_df2 %>%
   filter(station == "OBI",
@@ -187,10 +188,12 @@ turb_clean <- turb_q2_clean %>%
   filter(turbidity<200)
 
 saveRDS(turb_clean, "data_clean/clean_turbidity_south_delta_event.rds")
+
 ```
 
-# Calculate Daily average
+# Calculate Daily average - Don't need to rerun
 ```{r}
+turb_clean <- readRDS("data_clean/clean_turbidity_south_delta_event.rds")
 spring_turb <- turb_clean %>%
   filter(month < 6,
          wy<2023) %>%
@@ -257,9 +260,10 @@ spring_turb_clean <- spring_turb %>%
   filter(!is.na(wytype))
 
 saveRDS(spring_turb_clean, "data_clean/clean_turbidity_south_delta_daily.rds")
+spring_turb_clean <- readRDS("data_clean/clean_turbidity_south_delta_daily.rds")
 ```
 
-## Plot
+## Plot - Current PLOT
 ```{r}
 (plot_turbidity <- ggplot(spring_turb_clean, aes(date2, meanTurb, color = fWY)) + 
     geom_line() + 
@@ -285,6 +289,7 @@ dev.off()
 * No flow at FRK so used OSJ
 
 ```{r}
+turb_clean <- readRDS("data_clean/clean_turbidity_south_delta_event.rds")
 FRK_turb <- turb_clean %>% filter(station == "FRK")
 FRK_data <- left_join(wind_df, FRK_turb)
 FRK_OSJ <- left_join(FRK_data, flow_OSJ %>% select(date, datetime, flow_OSJ)) %>%
@@ -301,10 +306,13 @@ FRK_OSJ_daily <- FRK_OSJ_long %>%
   filter(dailyMean<20000 & dailyMean > -20000,
          wy < 2023) 
 
-FRK_OSJ_daily_wide <- FRK_OSJ_daily %>%
-  pivot_wider(cols = c())
+FRK_OSJ_wide <- FRK_OSJ_daily %>%
+  pivot_wider( names_from = "parameter", values_from = c("dailyMean", "dailyMax", "dailyMin"))
+
+saveRDS(FRK_OSJ_daily, "data_clean/FRK_OSJ_wind_turbidity_flow_data.rds")
 ```
 
+### Plots
 ```{r}
 ggplot(FRK_OSJ_daily %>% filter(parameter != "wind_dir")) + 
   geom_point(aes(date, dailyMean, color = factor(wy))) + 
