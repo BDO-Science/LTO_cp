@@ -6,6 +6,9 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 ---
+# Temperature and Larval Life Stage Timing
+
+This was created to inform larval timing for first detection in the South and Central Delta, and how it coincides with water temperature in different years (e.g. warm vs cool years)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -20,12 +23,19 @@ library(here)
 library(readxl)
 ```
 
+## Read in datasets
+
+* Water year type
+* Larval timing from Brian Mahardja: https://github.com/bmahardja/spatiotemporal-domain
+* Filtered water temp data, from the heatwave SBDS updated dataset, though original dataset details at https://doi.org/10.6073/pasta/7385985f68b02c0deb2a9e425a9f3ad8
 ```{r}
+# Water year
 wytype <- read.csv("data_raw/WYType.csv") %>%
   select(WY, Basin, Yr.type) %>%
   mutate(wy = as.numeric(WY)) %>%
   pivot_wider(names_from = "Basin", values_from = Yr.type, id_cols = "wy")
 
+# Larvae
 smelt_timing <- read_excel("data_raw/larval_smelt_timing.xlsx") %>%
   filter(Cohort > 2008) %>%
   janitor::clean_names()%>%
@@ -34,18 +44,20 @@ smelt_timing <- read_excel("data_raw/larval_smelt_timing.xlsx") %>%
          wy = year(x0),
          fWY = factor(wy))%>%
   filter(wy > 2009 & wy< 2020) 
-```
 
-# Read data - filter to stations of interest
-```{r}
+# Water temp
 stations_temp <- c("BLP", "HLT", "HOL")
 # Copied over data from another synthesis project with QA/QCed water temp data. Code available: https://github.com/catarfish/heatwaves
+
 temp <- readRDS("data_clean/Temp_filtered.rds") %>%
   filter(Station %in% stations_temp) 
 latlons <- read.csv("https://portal.edirepository.org/nis/dataviewer?packageid=edi.591.2&entityid=a059f5eea4f8500fe1a43566451ec593")
 ```
 
+## Manipulate data
 ```{r}
+
+# Add wy and datetime variables, rename
 temp_sum <- temp %>%
   mutate(month = month(Date),
          year = year(Date),
@@ -53,6 +65,7 @@ temp_sum <- temp %>%
   rename(station = Station, 
          date = Date)
 
+# Calculate daily stats, join wytype, filter months and years
 temp_daily <- temp_sum %>%
   group_by(date, month, wy, station) %>%
   summarize(meanTemp = mean(Temp, na.rm = TRUE),
@@ -66,41 +79,32 @@ temp_daily <- temp_sum %>%
   left_join(wytype) %>%
   mutate(fWY = factor(wy),
          index = 1:n()) %>%
-  mutate(station_name = case_when(station == "BLP" ~ "SJR Blind Point",
-                                  station == "HLT" ~ "Middle River Holt",
-                                  station == "HOL" ~ "Holland Cut")) %>%
   rename(wytype = SacramentoValley) %>%
   select(index, everything()) %>%
   select(-SanJoaquinValley) %>%
   filter(!is.na(wytype), (month >1 & month < 6), wy > 2009 & wy< 2020) %>%
    mutate(wytype = factor(wytype, levels = c("W", "AN", "BN","D", "C")),
           fWY = factor(wy),
-          over12 = ifelse(meanTemp > 12, 20, 0))
-        
-                                      
-```
+          over12 = ifelse(meanTemp > 12, 20, 0)) # label if over 12 degrees
 
-```{r}
+# Find the first date of reaching 12 degrees for each year/station       
 firsttemp <- temp_daily %>%
   filter(over12 == 20) %>%
   group_by(station, wy, fWY) %>%
   summarize(firstdate = min(date2)) %>%
-  rename(date2 = firstdate)
+  rename(date2 = firstdate)                                      
 ```
+
 
 ### Plot data
 ```{r}
 plot_temp <- ggplot2::ggplot()+
   ggplot2::theme_bw()+
- 
   ggplot2::geom_line(data=temp_daily, aes(x=date2,y=meanTemp,color=station, linetype = wytype), size = 0.5)+
-  
   ggplot2::geom_vline(data=smelt_timing, aes(xintercept = date2))+
   ggplot2::geom_hline(yintercept = 12)+
-   geom_point(data = firsttemp, aes(x = date2, y = 12, color = station), size = 2, shape = 5) + facet_wrap(~fWY, strip.position = "left", nrow = 10)+
- # geom_smooth(aes(group=wytype),se=F)+
+  ggplot2::geom_point(data = firsttemp, aes(x = date2, y = 12, color = station), size = 2, shape = 5) + facet_wrap(~fWY, strip.position = "left", nrow = 10)+
   ggplot2::scale_colour_manual(values = c("orange3", "aquamarine3", "darkblue")) +
-  #ggplot2::scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1),name="",labels=c(2017:2022)) +
   ggplot2::scale_linetype_manual(values = c("dotted", "solid", "twodash", "longdash")) +
   ggplot2::theme(plot.title=element_text(size=10), 
                  axis.text.x=element_text(size=10, color="black",angle=90), 
@@ -118,15 +122,14 @@ plot_temp <- ggplot2::ggplot()+
 plot_temp
 ```
 
-
-### Save plot
+## Save plot
 ```{r}
 png(here("figures","temp_larvaldetection.tiff"),
      type="cairo",
      units="in", 
-     width=8, #10*1, 
-     height=8, #22*1, 
-     pointsize=5, #12, 
+     width=8, 
+     height=8, 
+     pointsize=5, 
      res=300)
 print(plot_temp)
 dev.off()
