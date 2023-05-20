@@ -1,0 +1,245 @@
+---
+title: "omr_offramp_dates"
+author: "Catarina Pien"
+date: '2023-05-19'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+source("functions.R")
+library(sharpshootR)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(here)
+library(readr)
+```
+
+# Clifton Court Offramp
+
+## Read data - filter to stations of interest
+
+```{r}
+startDate = "2011-01-01"
+endDate = "2022-12-31"
+
+temp_CLC <- CDECquery(id = "CLC", 
+                      sensor = 146, 
+                      interval = "H", 
+                      start = startDate,
+                      end = endDate)
+
+temp_df <- temp_CLC %>%
+  rename(temp = value)
+
+# saveRDS(temp_df, "data_raw/temp_cdec_CLC_2011-2022.rds", compress = "xz")
+```
+
+## Check data not too messy
+
+```{r}
+ggplot(temp_df) + geom_point(aes(datetime, temp))
+```
+
+## Convert to daily, calculate first date where 3 consecutive days of CLC >=25
+```{r}
+temp_daily <- temp_df %>%
+  mutate(date = date(datetime)) %>%
+  group_by(year, date) %>%
+  summarize(mean = mean(temp,  na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(thresh = ifelse(mean>=25, 1L, 0L),
+         nextday = ifelse(as.numeric(date-lag(date, 1L)) == 1, 1L, 0L)) %>%
+  arrange(date) %>%
+  mutate(threeday = ifelse(thresh == 1L & 
+                             lag(thresh, 1L) == 1L & 
+                             lag(thresh, 2L) == 1L, 
+                           1L, 0L)) 
+
+date_table <- temp_daily %>%
+  filter(threeday == 1L) %>%
+  group_by(year) %>%
+  summarize(first = first(date))
+```
+
+## Write table
+```{r}
+# write_csv(date_table, "data_clean/table_ds_offramp_clc_dates.csv")
+```
+
+# Adult Temperature Offramp
+
+```{r}
+temp_SJJ <- CDECquery(id = "SJJ",    
+                      sensor = 25, 
+                      interval = "E",
+                      start = startDate, 
+                      end = endDate) 
+
+temp_RIV <- CDECquery(id = "RIV", 
+                      sensor = 25, 
+                      interval = "H",
+                      start = startDate,  
+                      end = endDate)
+
+temp_SJJ_df <- temp_SJJ %>%
+  mutate(temp = (value -32) *5/9,
+         month = month(datetime)) %>%
+  mutate(temp = replace(temp, temp <5, NA),
+         temp = replace(temp, month == 8 & temp<20, NA)) 
+temp_RIV_df <- temp_RIV %>%
+  mutate(temp = (value-32) *5/9,
+         month = month(datetime),
+         temp = replace(temp, (temp >= 40 | temp <= 0), NA)) 
+
+ # saveRDS(temp_SJJ_df, "data_raw/temp_CDEC_SJJ_2011-2022.rds", compress = "xz")
+ # saveRDS(temp_RIV_df, "data_raw/temp_CDEC_RIV_2011-2022.rds", compress = "xz")
+
+```
+
+## Check data not too messy
+```{r}
+ggplot(temp_SJJ_df) + geom_point(aes(datetime, temp, color = factor(month)))
+ggplot(temp_RIV_df) + geom_point(aes(datetime, temp))
+```
+
+```{r}
+library(pad)
+# Water temp
+
+# Copied over data from another synthesis project with QA/QCed water temp data. Code available: https://github.com/catarfish/heatwaves
+
+# temp <- readRDS("data_clean/Temp_filtered.rds") %>%
+#   filter(Station %in% stations_temp)  %>%
+#   mutate(year = year(Date)) %>%
+#   filter(year>2010)
+temp_SJJ_daily <- temp_SJJ_df %>%
+  mutate(date = date(datetime)) %>%
+  arrange(datetime) %>%
+  group_by(year, date) %>%
+  summarize(mean = mean(temp)) %>%
+  ungroup() %>%
+  filter(!is.na(date)) %>%
+  arrange(date) %>%
+  pad %>%
+  mutate(mean3day = zoo::rollapply(mean, 3, mean, align = "right", partial = TRUE)) %>%
+  mutate(station = "SJJ")%>%
+  mutate(thresh = ifelse(mean3day>=12, 1L, 0L))
+
+temp_RIV_daily <- temp_RIV_df %>%
+  mutate(date = date(datetime)) %>%
+  arrange(datetime) %>%
+  group_by(year, date) %>%
+  summarize(mean = mean(temp, na.rm  = TRUE)) %>%
+  ungroup() %>%
+  filter(!is.na(date)) %>%
+  arrange(date) %>%
+  pad %>%
+  mutate(mean3day = zoo::rollapply(mean, 3, mean, align = "right", partial = TRUE)) %>%
+  mutate(station = "RIV") %>%
+  mutate(thresh = ifelse(mean3day>=12, 1L, 0L))
+
+temp_daily_adult <- rbind(temp_RIV_daily, temp_SJJ_daily)
+temp_adult_table <- temp_daily_adult %>%
+  filter(thresh == 1L) %>%
+  group_by(year, station) %>%
+  summarize(first = first(date)) %>%
+  ungroup() %>% 
+  pivot_wider(names_from = "station", values_from = "first") %>%
+  mutate(first = if_else(RIV<SJJ | is.na(SJJ), RIV, SJJ))
+  
+```
+
+```{r}
+write_csv(temp_adult_table, "data_clean/table_ds_adult_offramp_riv_sjj_dates.csv")
+```
+
+# Salmon temperature
+```{r}
+temp_MSD <- CDECquery(id = "MSD",    
+                      sensor = 25, 
+                      interval = "E",
+                      start = startDate, 
+                      end = endDate) 
+
+temp_PPT <- CDECquery(id = "PPT", 
+                      sensor = 25, 
+                      interval = "H",
+                      start = startDate,  
+                      end = endDate)
+
+temp_MSD_df <- temp_MSD %>%
+  mutate(temp = (value -32) *5/9,
+         month = month(datetime)) %>%
+  mutate(temp = replace(temp, (temp >= 40 | temp <= 0), NA),
+         temp = replace(temp, month == 8 & temp<20, NA)) 
+temp_PPT_df <- temp_RIV %>%
+  mutate(temp = (value-32) *5/9,
+         month = month(datetime),
+         temp = replace(temp, (temp >= 40 | temp <= 0), NA)) 
+
+ # saveRDS(temp_SJJ_df, "data_raw/temp_CDEC_SJJ_2011-2022.rds", compress = "xz")
+ # saveRDS(temp_RIV_df, "data_raw/temp_CDEC_RIV_2011-2022.rds", compress = "xz")
+
+```
+
+## Check data not too messy
+```{r}
+ggplot(temp_MSD_df) + geom_point(aes(datetime, temp, color = factor(month)))
+ggplot(temp_PPT_df) + geom_point(aes(datetime, temp))
+```
+
+```{r}
+dates_wr <- as.Date(c("2011-04-22", "2012-04-27", "2013-04-12",
+                   "2014-04-11", "2015-04-17", "2016-04-27",
+                   "2017-05-05", "2018-04-21", "2019-05-20", 
+                   "2020-04-10", "2021-04-25"))
+dates_sh <- as.Date(c("2011-05-13", "2012-04-13", "2013-05-10", 
+                      "2014-05-22", "2015-02-18", "2016-03-30",
+                      "2017-05-27", "2018-05-14", "2019-05-14",
+                      "2020-05-22", "2021-05-10"))
+
+
+# Water temp
+
+temp_MSD_daily <- temp_MSD_df %>%
+  mutate(date = date(datetime)) %>%
+  arrange(datetime) %>%
+  group_by(year, date) %>%
+  summarize(mean = mean(temp)) %>%
+  ungroup() %>%
+  filter(!is.na(date)) %>%
+  mutate(temp = round((mean * 9/5) + 32,1))
+
+temp_PPT_daily <- temp_PPT_df %>%
+  mutate(date = date(datetime)) %>%
+  arrange(datetime) %>%
+  group_by(year, date) %>%
+  summarize(mean = mean(temp, na.rm  = TRUE)) %>%
+  ungroup() %>%
+  filter(!is.na(date)) %>%
+  arrange(date)  %>%
+  mutate(temp = round((mean * 9/5) + 32, 1))
+
+
+temp_MSD_wr <- temp_MSD_daily %>%  filter(date %in% dates_wr) %>% mutate(sp = "MSD_wr")
+temp_MSD_sh <- temp_MSD_daily %>%  filter(date %in% dates_sh) %>% mutate(sp = "MSD_sh")
+temp_PPT_wr <- temp_PPT_daily %>%  filter(date %in% dates_wr) %>% mutate(sp = "PPT_wr")
+temp_PPT_sh <- temp_PPT_daily %>%  filter(date %in% dates_sh) %>% mutate(sp = "PPT_sh")
+
+temp_salmonid <- rbind(temp_MSD_wr, temp_MSD_sh,
+                       temp_PPT_wr, temp_PPT_sh)
+```
+
+```{r}
+write_csv(temp_salmonid, "data_clean/temp_wr_sh_MSD_PTT.csv")
+```
+```
+
