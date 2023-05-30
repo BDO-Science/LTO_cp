@@ -111,7 +111,7 @@ ggplot(temp_RIV_df) + geom_point(aes(datetime, temp))
 ```
 
 ```{r}
-library(pad)
+library(padr)
 # Water temp
 
 # Copied over data from another synthesis project with QA/QCed water temp data. Code available: https://github.com/catarfish/heatwaves
@@ -180,13 +180,13 @@ temp_MSD_df <- temp_MSD %>%
          month = month(datetime)) %>%
   mutate(temp = replace(temp, (temp >= 40 | temp <= 0), NA),
          temp = replace(temp, month == 8 & temp<20, NA)) 
-temp_PPT_df <- temp_RIV %>%
+temp_PPT_df <- temp_PPT %>%
   mutate(temp = (value-32) *5/9,
          month = month(datetime),
          temp = replace(temp, (temp >= 40 | temp <= 0), NA)) 
 
- # saveRDS(temp_SJJ_df, "data_raw/temp_CDEC_SJJ_2011-2022.rds", compress = "xz")
- # saveRDS(temp_RIV_df, "data_raw/temp_CDEC_RIV_2011-2022.rds", compress = "xz")
+ # saveRDS(temp_MSD_df, "data_raw/temp_CDEC_MSD_2011-2022.rds", compress = "xz")
+ # saveRDS(temp_PPT_df, "data_raw/temp_CDEC_PPT_2011-2022.rds", compress = "xz")
 
 ```
 
@@ -197,14 +197,25 @@ ggplot(temp_PPT_df) + geom_point(aes(datetime, temp))
 ```
 
 ```{r}
-dates_wr <- as.Date(c("2011-04-22", "2012-04-27", "2013-04-12",
-                   "2014-04-11", "2015-04-17", "2016-04-27",
-                   "2017-05-05", "2018-04-21", "2019-05-20", 
-                   "2020-04-10", "2021-04-25"))
+# dates_wr <- as.Date(c("2011-04-22", "2012-04-27", "2013-04-12",
+#                    "2014-04-11", "2015-04-17", "2016-04-27",
+#                    "2017-05-05", "2018-04-21", "2019-05-20", 
+#                    "2020-04-10", "2021-04-25"))
+# dates_sh <- as.Date(c("2011-05-13", "2012-04-13", "2013-05-10", 
+#                       "2014-05-22", "2015-02-18", "2016-03-30",
+#                       "2017-05-27", "2018-05-14", "2019-05-14",
+#                       "2020-05-22", "2021-05-10"))
+# 95% Dates came from SacPAS. (Chipps Trawl/WR/Catch Index)
+# https://www.cbr.washington.edu/sacramento/data/query_hrt.html
+
+dates_wr <- as.Date(c("2011-04-20", "2012-04-27", "2013-04-12",
+                   "2014-04-9", "2015-04-15", "2016-04-08",
+                   "2017-04-27", "2018-04-17", "2019-04-19", 
+                   "2020-04-10", "2021-04-25", "04-05-2022"))
 dates_sh <- as.Date(c("2011-05-13", "2012-04-13", "2013-05-10", 
-                      "2014-05-22", "2015-02-18", "2016-03-30",
+                      "2014-05-22", "2015-02-18", "2016-12-30",
                       "2017-05-27", "2018-05-14", "2019-05-14",
-                      "2020-05-22", "2021-05-10"))
+                      "2020-05-22", "2021-11-27", "2022-05-09"))
 
 
 # Water temp
