@@ -204,23 +204,45 @@ df_south <- df_sf %>%
   sf::st_join(R_EDSM_Regions_1718P1, join = st_within) %>%
   filter(Region == "South")
 
-ggplot() +
-    geom_sf(data = R_EDSM_Regions_1718P1, aes(fill = Region), inherit.aes = FALSE)+
-  geom_sf(data = df_south, aes(Secchi), color = "black", inherit.aes = FALSE)
+WW_Delta <- st_transform(WW_Delta, crs = st_crs(R_EDSM_Regions_1718P1)) %>%
+  filter(HNAME!= "SAN FRANCISCO BAY")
 
+bbox(R_EDSM_Regions_1718P1)
+map_data <- ggplot() +
+  geom_sf(data = R_EDSM_Regions_1718P1, aes(fill = Region), alpha = 0.5, inherit.aes = FALSE)+
+  geom_sf(data = WW_Delta, color = "white", alpha = 0.5, inherit.aes = FALSE)+
+geom_sf(data = df_south, color = "black", shape = 1, inherit.aes = FALSE) +
+  scale_x_continuous(limits = c(560000, 650000)) +
+  scale_y_continuous(limits = c(4180000, 4270000)) +
+  theme_bw()
+
+png(filename = here::here("figures", "larval_smelt_secchi_map.png"), width = 7, height = 7, units = "in", family = "sans", res = 300)
+map_data
+dev.off()
 
 # saveRDS(df, "data_raw/secchi_depths.rds")
 # saveRDS(df_south, "data_raw/secchi_depths_south.rds")
 
 ## Join secchi depth and qwest data -----------------------------------------
-larval <- left_join(df_south, qwest, by = "Date") %>%
-  mutate(thresh = if_else(QWEST < 0 & Secchi < 100, 1L, 0L))
+larval0 <- left_join(df_south, qwest, by = "Date") %>%
+  select(Date, Station, Secchi, QWEST, Region) %>%
+  unique() %>%
+  filter(!is.na(Secchi))
+
+larval <- larval0 %>%
+  mutate(Date2 = ymd(paste0("1980-", month(Date), "-", day(Date))),
+         WY = ifelse(month(Date)>=10, year(Date) + 1, year(Date) )) %>%
+  mutate(week = week(Date)) %>%
+  group_by(WY, week) %>%
+  mutate(meanSecchi = mean(Secchi, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(thresh_Secchi = if_else(meanSecchi < 100, 1L, 0L),
+         thresh = if_else(QWEST < 0 & meanSecchi < 100, 1L, 0L))
 
 secchi_thresh <- larval %>%
   pivot_longer(cols = c("Secchi", "QWEST"), values_to = "value", names_to = "parameter") %>%
   filter(!is.na(thresh)) %>%
-  mutate(Date2 = ymd(paste0("1980-", month(Date), "-", day(Date))),
-         WY = ifelse(month(Date)>=10, year(Date) + 1, year(Date) )) %>%
+
   filter(WY > 2009 & WY<2020,
          month(Date) >=3 & month(Date)<7) %>%
   rename(larjuv_action_triggered = thresh) %>%
@@ -230,9 +252,10 @@ secchi_thresh <- larval %>%
 ## Plot and save data ---------------------------------
 secchi_thresh_only <- secchi_thresh %>% filter(parameter == "Secchi")
 
-(plot_secchi_west <- ggplot(secchi_thresh_only) +
+(plot_secchi_south <- ggplot(secchi_thresh_only) +
   geom_point(aes(Date2, value, color = larjuv_action_triggered, size = larjuv_action_triggered, shape = larjuv_action_triggered)) +
   facet_wrap(~WY, scales= "free_y", nrow = 12, strip.position = "right") +
+    geom_hline(yintercept = 100, linetype = "dotted") +
   scale_shape_manual(values = c(1,17)) +
   scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c( "gray80", "steelblue4")) +
@@ -244,15 +267,41 @@ secchi_thresh_only <- secchi_thresh %>% filter(parameter == "Secchi")
         legend.position = "top",
         strip.text = element_text(size=11)))
 
-png(filename = here::here("figures", "larval_smelt_protections.png"), width = 8, height = 6, units = "in", family = "sans", res = 300)
-plot_secchi_west
+png(filename = here::here("figures", "larval_smelt_protections.png"), width = 8, height = 7, units = "in", family = "sans", res = 300)
+plot_secchi_south
 dev.off()
 
 secchi_thresh_dates <- secchi_thresh %>%
   filter(thresh == 1)
 
-# write_csv(secchi_thresh_dates, "data_clean/secchi_thresh_dates.csv")
+ # write_csv(secchi_thresh_dates, "data_clean/secchi_thresh_dates.csv")
 
 
+## New -----------------
+secchi_thresh_new <- larval %>%
+  mutate(Date2 = ymd(paste0("1980-", month(Date), "-", day(Date))),
+         WY = ifelse(month(Date)>=10, year(Date) + 1, year(Date) )) %>%
+  filter(WY > 2009 & WY<2020,
+         month(Date) >=3 & month(Date)<7) %>%
+  rename(larjuv_action_triggered = thresh_Secchi) %>%
+  mutate(larjuv_action_triggered = factor(larjuv_action_triggered)) %>%
+  arrange(Date)
 
+(plot_secchi_new <- ggplot(secchi_thresh_new) +
+    geom_point(aes(Date2, Secchi, color = larjuv_action_triggered, size = larjuv_action_triggered, shape = larjuv_action_triggered)) +
+    geom_hline(yintercept = 100, linetype = "dotted") +
+    facet_wrap(~WY, scales= "free_y", nrow = 12, strip.position = "right") +
+    scale_shape_manual(values = c(1,17)) +
+    scale_size_manual(values = c(1, 3)) +
+    scale_color_manual(values = c( "gray80", "steelblue4")) +
+    scale_x_date(date_breaks = "1 months", date_labels = "%b", expand = c(0,0))+
+    labs(y = "Secchi Depth (cm)") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, size = 10),
+          axis.title.x = element_blank(),
+          legend.position = "top",
+          strip.text = element_text(size=11)))
 
+png(filename = here::here("figures", "larval_smelt_protections_new.png"), width = 8, height = 7, units = "in", family = "sans", res = 300)
+plot_secchi_new
+dev.off()
